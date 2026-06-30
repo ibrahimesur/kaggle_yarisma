@@ -409,7 +409,7 @@ def train_and_validate(X: pd.DataFrame,
             auto_class_weights="Balanced",
             verbose=100,
             early_stopping_rounds=100,
-            task_type="CPU",          # GPU varsa "GPU" olarak değiştirilebilir
+            task_type="GPU",          # GPU varsa "GPU" olarak değiştirilebilir
         )
 
         model.fit(
