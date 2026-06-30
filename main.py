@@ -25,6 +25,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import f1_score
 from catboost import CatBoostClassifier
+from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
 RANDOM_STATE = 42
@@ -179,7 +180,7 @@ def create_negative_samples(train_pairs: pd.DataFrame,
     # Pozitif çiftlerdeki eşsiz (term_id, item_id) setini oluştur
     positive_set = set(zip(train_pairs["term_id"], train_pairs["item_id"]))
 
-    for _, row in pos_with_cat.iterrows():
+    for _, row in tqdm(pos_with_cat.iterrows(), total=len(pos_with_cat), desc="Negatif ornekleme"):
         term_id = row["term_id"]
         pos_category = str(row["category"]) if pd.notna(row["category"]) else ""
 
@@ -272,6 +273,7 @@ def build_tfidf_cosine(df: pd.DataFrame,
     TF-IDF vektörlerini oluştur ve Kosinüs Benzerliğini hesapla.
     Hem eğitim hem de test verisi için kullanılacak.
     """
+    print(f"    TF-IDF fit ediliyor ({len(df)} satir)...")
     tfidf = TfidfVectorizer(
         max_features=max_features,
         sublinear_tf=True,
@@ -282,20 +284,24 @@ def build_tfidf_cosine(df: pd.DataFrame,
     all_texts = pd.concat([df[query_col], df[product_col]], ignore_index=True)
     tfidf.fit(all_texts)
 
+    print("    Query vektorleri olusturuluyor...")
     query_vecs   = tfidf.transform(df[query_col])
+    print("    Product vektorleri olusturuluyor...")
     product_vecs = tfidf.transform(df[product_col])
 
-    # Satır bazında kosinüs benzerliği (her çift için tek skor)
-    cos_sims = np.array([
-        cosine_similarity(query_vecs[i], product_vecs[i])[0, 0]
-        for i in range(query_vecs.shape[0])
-    ])
+    # Vektorize kosinus benzerligi (sparse matrix multiply - cok hizli)
+    print("    Kosinus benzerligi hesaplaniyor (vektorize)...")
+    from sklearn.preprocessing import normalize
+    query_norm = normalize(query_vecs, norm='l2')
+    product_norm = normalize(product_vecs, norm='l2')
+    cos_sims = np.array(query_norm.multiply(product_norm).sum(axis=1)).flatten()
+    print(f"    Tamamlandi! ({len(cos_sims)} skor)")
     return cos_sims
 
 
 def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     """Sayısal özellik vektörlerini oluşturur."""
-    print("[INFO] Özellik mühendisliği başlıyor...")
+    print(f"[INFO] Ozellik muhendisligi basliyor ({len(df)} satir)...")
 
     features = pd.DataFrame(index=df.index)
 
