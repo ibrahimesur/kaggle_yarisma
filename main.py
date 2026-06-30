@@ -292,12 +292,11 @@ def build_tfidf_cosine(df: pd.DataFrame,
     )
 
     all_texts = pd.concat([df[query_col], df[product_col]], ignore_index=True)
-    tfidf.fit(all_texts)
+    # Scikit-learn içine gönderirken tqdm ile sarıyoruz
+    tfidf.fit(tqdm(all_texts, desc="TF-IDF Fit (Tum Metinler)", total=len(all_texts)))
 
-    print("    Query vektorleri olusturuluyor...")
-    query_vecs   = tfidf.transform(df[query_col])
-    print("    Product vektorleri olusturuluyor...")
-    product_vecs = tfidf.transform(df[product_col])
+    query_vecs   = tfidf.transform(tqdm(df[query_col], desc="TF-IDF Transform (Sorgu)", total=len(df)))
+    product_vecs = tfidf.transform(tqdm(df[product_col], desc="TF-IDF Transform (Urun)", total=len(df)))
 
     # Vektorize kosinus benzerligi (sparse matrix multiply - cok hizli)
     print("    Kosinus benzerligi hesaplaniyor (vektorize)...")
