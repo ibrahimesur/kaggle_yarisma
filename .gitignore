@@ -1,0 +1,15 @@
+# Kaggle veri seti (cache)
+*.cache/
+__pycache__/
+*.pyc
+
+# Submission dosyaları
+submission.csv
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
