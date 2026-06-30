@@ -318,29 +318,52 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     print("  > TF-IDF kosinus benzerligi hesaplaniyor...")
     features["cos_sim_query_product"] = build_tfidf_cosine(df)
 
-    # ── 2. Kelime Kesişim Özellikleri ──
-    tqdm.pandas(desc="Sorgu kelimeleri (set)")
-    q_words = df["query_clean"].progress_apply(lambda x: set(x.split()))
-    tqdm.pandas(desc="Urun kelimeleri (set)")
-    p_words = df["product_text"].progress_apply(lambda x: set(x.split()))
-    tqdm.pandas(desc="Baslik kelimeleri (set)")
-    t_words = df["title_clean"].progress_apply(lambda x: set(x.split()))
-
-    # Sorgu <-> urun detayi kelime kesisimi
-    features["word_overlap_count"] = [
-        len(q & p) for q, p in tqdm(zip(q_words, p_words), total=len(df), desc="Ozellik: word_overlap_count")
-    ]
-    features["word_overlap_ratio"] = [
-        len(q & p) / max(len(q), 1) for q, p in tqdm(zip(q_words, p_words), total=len(df), desc="Ozellik: word_overlap_ratio")
-    ]
-
-    # Sorgu <-> baslik kelime kesisimi
-    features["title_overlap_count"] = [
-        len(q & t) for q, t in tqdm(zip(q_words, t_words), total=len(df), desc="Ozellik: title_overlap_count")
-    ]
-    features["title_overlap_ratio"] = [
-        len(q & t) / max(len(q), 1) for q, t in tqdm(zip(q_words, t_words), total=len(df), desc="Ozellik: title_overlap_ratio")
-    ]
+    # ── 2 & 4. Kelime Kesişim ve Kategori Özellikleri (TEK DÖNGÜDE, BELLEK TASARRUFU) ──
+    word_overlap_count = []
+    word_overlap_ratio = []
+    title_overlap_count = []
+    title_overlap_ratio = []
+    cat_match_any = []
+    cat_match_count = []
+    cat_depth = []
+    
+    # Pandas Series yerine Python Listelerine çevirmek döngüyü hızlandırır
+    queries = df["query_clean"].tolist()
+    products = df["product_text"].tolist()
+    titles = df["title_clean"].tolist()
+    categories = df["category_clean"].tolist()
+    
+    for q_str, p_str, t_str, c_str in tqdm(zip(queries, products, titles, categories), total=len(df), desc="Kelime & Kategori Ozel."):
+        q = set(q_str.split())
+        p = set(p_str.split())
+        t = set(t_str.split())
+        cats = c_str.split("/") if c_str else []
+        
+        # Kelime kesisimi (Sorgu <-> Urun)
+        w_inter = len(q & p)
+        word_overlap_count.append(w_inter)
+        word_overlap_ratio.append(w_inter / max(len(q), 1))
+        
+        # Baslik kesisimi (Sorgu <-> Baslik)
+        t_inter = len(q & t)
+        title_overlap_count.append(t_inter)
+        title_overlap_ratio.append(t_inter / max(len(q), 1))
+        
+        # Kategori
+        cat_str = "/".join(cats)
+        c_any = int(any(w in cat_str for w in q)) if q and cats else 0
+        c_count = sum(1 for w in q if w in cat_str) if q and cats else 0
+        cat_match_any.append(c_any)
+        cat_match_count.append(c_count)
+        cat_depth.append(len(cats))
+        
+    features["word_overlap_count"] = word_overlap_count
+    features["word_overlap_ratio"] = word_overlap_ratio
+    features["title_overlap_count"] = title_overlap_count
+    features["title_overlap_ratio"] = title_overlap_ratio
+    features["cat_match_any"] = cat_match_any
+    features["cat_match_count"] = cat_match_count
+    features["cat_depth"] = cat_depth
 
     # ── 3. Uzunluk Farkı Özellikleri ──
     features["query_len_char"]    = df["query_clean"].str.len()
@@ -351,22 +374,6 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     features["len_diff_char"]     = abs(features["query_len_char"] - features["title_len_char"])
     features["len_diff_word"]     = abs(features["query_word_count"] - features["title_word_count"])
     features["len_ratio"]         = features["query_len_char"] / (features["title_len_char"] + 1)
-
-    # ── 4. Kategori Ağacı Eşleşme Özellikleri ──
-    # Kategori hiyerarşisi "/" ile ayrılıyor (ör: ayakkabı/spor ayakkabı/sneaker)
-    tqdm.pandas(desc="Kategori agaci parcalaniyor")
-    cat_levels = df["category_clean"].progress_apply(lambda x: x.split("/") if x else [])
-
-    # Sorgu kelimelerinin kategori seviyelerine düşmesi
-    features["cat_match_any"] = [
-        int(any(w in "/".join(cats) for w in q)) if q and cats else 0
-        for q, cats in tqdm(zip(q_words, cat_levels), total=len(df), desc="Ozellik: cat_match_any")
-    ]
-    features["cat_match_count"] = [
-        sum(1 for w in q if w in "/".join(cats)) if q and cats else 0
-        for q, cats in tqdm(zip(q_words, cat_levels), total=len(df), desc="Ozellik: cat_match_count")
-    ]
-    features["cat_depth"] = cat_levels.apply(len)
 
     # ── 5. Marka Eşleşmesi ──
     features["brand_in_query"] = [
