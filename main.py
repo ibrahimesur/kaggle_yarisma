@@ -219,13 +219,17 @@ def create_negative_samples(train_pairs: pd.DataFrame,
 # 3. METİN ÖN İŞLEME & ÖZELLİK MÜHENDİSLİĞİ
 # ═══════════════════════════════════════════════════════════════════════════
 
+# Regex kurallarını döngü dışında tek seferlik derle (Büyük hız artışı sağlar)
+PUNCT_RE = re.compile(r"[^\w\sçğıöşüâîû]")
+SPACE_RE = re.compile(r"\s+")
+
 def clean_text(text: str) -> str:
     """Küçük harfe çevir, noktalama temizle, fazla boşlukları sil."""
     if pd.isna(text):
         return ""
     text = str(text).lower().strip()
-    text = re.sub(r"[^\w\sçğıöşüâîû]", " ", text)    # Türkçe karakterleri koru
-    text = re.sub(r"\s+", " ", text).strip()
+    text = PUNCT_RE.sub(" ", text)    # Türkçe karakterleri koru
+    text = SPACE_RE.sub(" ", text).strip()
     return text
 
 
