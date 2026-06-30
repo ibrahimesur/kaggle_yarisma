@@ -251,26 +251,21 @@ def merge_and_clean(pairs: pd.DataFrame,
     for col in expected_text_cols:
         df[col] = df[col].fillna("")
 
-    # Metin temizleme
-    tqdm.pandas(desc="Temizleniyor: query")
-    df["query_clean"]      = df["query"].progress_apply(clean_text)
-    tqdm.pandas(desc="Temizleniyor: title")
-    df["title_clean"]      = df["title"].progress_apply(clean_text)
-    tqdm.pandas(desc="Temizleniyor: category")
-    df["category_clean"]   = df["category"].progress_apply(clean_text)
-    tqdm.pandas(desc="Temizleniyor: brand")
-    df["brand_clean"]      = df["brand"].progress_apply(clean_text)
-    tqdm.pandas(desc="Temizleniyor: attributes")
-    df["attributes_clean"] = df["attributes"].progress_apply(clean_text)
+    print("[INFO] Metinler temizleniyor (Saf Python listeleri ile cok hizli)...")
+    def fast_clean(texts, desc):
+        return [SPACE_RE.sub(" ", PUNCT_RE.sub(" ", str(t).lower())).strip() if t else "" for t in tqdm(texts, desc=desc)]
+
+    df["query_clean"]      = fast_clean(df["query"].tolist(), "Temizleniyor: query")
+    df["title_clean"]      = fast_clean(df["title"].tolist(), "Temizleniyor: title")
+    df["category_clean"]   = fast_clean(df["category"].tolist(), "Temizleniyor: category")
+    df["brand_clean"]      = fast_clean(df["brand"].tolist(), "Temizleniyor: brand")
+    df["attributes_clean"] = fast_clean(df["attributes"].tolist(), "Temizleniyor: attributes")
 
     # Ürün detaylarını tek bir metin alanında birleştir (TF-IDF için)
-    tqdm.pandas(desc="Urun detaylari birlestiriliyor")
-    df["product_text"] = (
-        df["title_clean"] + " " +
-        df["category_clean"] + " " +
-        df["brand_clean"] + " " +
-        df["attributes_clean"]
-    ).progress_apply(lambda x: re.sub(r"\s+", " ", x).strip())
+    df["product_text"] = [
+        SPACE_RE.sub(" ", f"{t} {c} {b} {a}").strip()
+        for t, c, b, a in tqdm(zip(df["title_clean"], df["category_clean"], df["brand_clean"], df["attributes_clean"]), total=len(df), desc="Urun detaylari")
+    ]
 
     return df
 
@@ -318,33 +313,34 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     print("  > TF-IDF kosinus benzerligi hesaplaniyor...")
     features["cos_sim_query_product"] = build_tfidf_cosine(df)
 
-    # ── 2 & 4. Kelime Kesişim ve Kategori Özellikleri (TEK DÖNGÜDE, BELLEK TASARRUFU) ──
-    word_overlap_count = []
-    word_overlap_ratio = []
-    title_overlap_count = []
-    title_overlap_ratio = []
-    cat_match_any = []
-    cat_match_count = []
-    cat_depth = []
+    # ── 2, 4, 5, 6, 7. Tüm Döngüsel Özellikleri TEK DÖNGÜDE Çıkar (Pandas Overhead'inden Kurtul) ──
+    word_overlap_count, word_overlap_ratio = [], []
+    title_overlap_count, title_overlap_ratio = [], []
+    cat_match_any, cat_match_count, cat_depth = [], [], []
+    brand_in_query, gender_in_query, age_group_in_query = [], [], []
+    exact_query_in_title = []
     
-    # Pandas Series yerine Python Listelerine çevirmek döngüyü hızlandırır
+    # Sütunları listelere çek (Çok hızlı iterasyon)
     queries = df["query_clean"].tolist()
     products = df["product_text"].tolist()
     titles = df["title_clean"].tolist()
     categories = df["category_clean"].tolist()
+    brands = df["brand_clean"].tolist()
+    genders = df["gender"].fillna("unknown").str.lower().tolist()
+    ages = df["age_group"].fillna("unknown").str.lower().tolist()
     
-    for q_str, p_str, t_str, c_str in tqdm(zip(queries, products, titles, categories), total=len(df), desc="Kelime & Kategori Ozel."):
+    for q_str, p_str, t_str, c_str, b_str, g_str, a_str in tqdm(zip(queries, products, titles, categories, brands, genders, ages), total=len(df), desc="Tum Ozellikler 1 Turda Cikariliyor"):
         q = set(q_str.split())
         p = set(p_str.split())
         t = set(t_str.split())
         cats = c_str.split("/") if c_str else []
         
-        # Kelime kesisimi (Sorgu <-> Urun)
+        # Kelime kesisimi
         w_inter = len(q & p)
         word_overlap_count.append(w_inter)
         word_overlap_ratio.append(w_inter / max(len(q), 1))
         
-        # Baslik kesisimi (Sorgu <-> Baslik)
+        # Baslik kesisimi
         t_inter = len(q & t)
         title_overlap_count.append(t_inter)
         title_overlap_ratio.append(t_inter / max(len(q), 1))
@@ -356,6 +352,12 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
         cat_match_any.append(c_any)
         cat_match_count.append(c_count)
         cat_depth.append(len(cats))
+
+        # Marka, Cinsiyet, Yas, Baslik Eşleşmesi
+        brand_in_query.append(int(b_str.strip() != "" and b_str in q_str) if b_str and q_str else 0)
+        gender_in_query.append(int(g_str.strip() != "" and g_str != "unknown" and g_str in q_str))
+        age_group_in_query.append(int(a_str.strip() != "" and a_str != "unknown" and a_str in q_str))
+        exact_query_in_title.append(int(q_str in t_str) if q_str else 0)
         
     features["word_overlap_count"] = word_overlap_count
     features["word_overlap_ratio"] = word_overlap_ratio
@@ -364,8 +366,12 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     features["cat_match_any"] = cat_match_any
     features["cat_match_count"] = cat_match_count
     features["cat_depth"] = cat_depth
+    features["brand_in_query"] = brand_in_query
+    features["gender_in_query"] = gender_in_query
+    features["age_group_in_query"] = age_group_in_query
+    features["exact_query_in_title"] = exact_query_in_title
 
-    # ── 3. Uzunluk Farkı Özellikleri ──
+    # ── 3. Uzunluk Farkı Özellikleri (Vektörize Pandas, Zaten Hızlıdır) ──
     features["query_len_char"]    = df["query_clean"].str.len()
     features["title_len_char"]    = df["title_clean"].str.len()
     features["product_len_char"]  = df["product_text"].str.len()
@@ -374,28 +380,6 @@ def extract_features(df: pd.DataFrame) -> pd.DataFrame:
     features["len_diff_char"]     = abs(features["query_len_char"] - features["title_len_char"])
     features["len_diff_word"]     = abs(features["query_word_count"] - features["title_word_count"])
     features["len_ratio"]         = features["query_len_char"] / (features["title_len_char"] + 1)
-
-    # ── 5. Marka Eşleşmesi ──
-    features["brand_in_query"] = [
-        int(b.strip() != "" and b in q) if b and q else 0
-        for q, b in tqdm(zip(df["query_clean"], df["brand_clean"]), total=len(df), desc="Ozellik: brand_in_query")
-    ]
-
-    # ── 6. Cinsiyet / Yaş Grubu Eşleşmesi ──
-    features["gender_in_query"] = [
-        int(g.strip() != "" and g != "unknown" and g in q)
-        for q, g in tqdm(zip(df["query_clean"], df["gender"].fillna("unknown").str.lower()), total=len(df), desc="Ozellik: gender_in_query")
-    ]
-    features["age_group_in_query"] = [
-        int(a.strip() != "" and a != "unknown" and a in q)
-        for q, a in tqdm(zip(df["query_clean"], df["age_group"].fillna("unknown").str.lower()), total=len(df), desc="Ozellik: age_group_in_query")
-    ]
-
-    # ── 7. Sorgu kelimelerinin başlıkta tam geçme oranı ──
-    features["exact_query_in_title"] = [
-        int(q in t) if q else 0
-        for q, t in tqdm(zip(df["query_clean"], df["title_clean"]), total=len(df), desc="Ozellik: exact_query_in_title")
-    ]
 
     print(f"[INFO] Toplam özellik sayısı: {features.shape[1]}")
     return features
